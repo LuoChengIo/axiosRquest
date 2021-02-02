@@ -1,14 +1,14 @@
 // axios的二次封装
 import axios from "axios";
 import Qs from "qs";
+import { addPending, removePending } from "./cancelMap";
 let count = 0;
 let loadingInstance = null;
 
 // create an axios instance
-const baseSetting = {
+const service = axios.create({
   baseURL: "/api", // url = base url + request url
   // withCredentials: true, // send cookies when cross-domain requests
-  timeout: 30000, // request timeout
   // `transformResponse` 在传递给 then/catch 前，允许修改响应数据
   transformResponse: [
     function(data) {
@@ -30,20 +30,20 @@ const baseSetting = {
   validateStatus: function(status) {
     return status >= 200 && status < 300; // 默认的
   }
-};
+});
 // 请求拦截器
-axios.interceptors.request.use(
+service.interceptors.request.use(
   config => {
     return config;
   },
   error => {
-    console.log("request:", error); // for debug
+    console.error("request:", error); // for debug
     return Promise.reject(error);
   }
 );
 
 // 响应拦截器
-axios.interceptors.response.use(
+service.interceptors.response.use(
   response => {
     const res = response.data;
     if (res.code !== 200) {
@@ -54,11 +54,29 @@ axios.interceptors.response.use(
     }
   },
   error => {
-    console.log("response:", error); // for debug
-    return Promise.reject(error);
+    console.error("response:", error); // for debug
+    let config = error.config;
+    // 不进行重试
+    if (!config || !config.retry) return Promise.reject(error);
+    // 设置重试初始值
+    config.__retryCount = config.__retryCount || 0;
+    // 判断重试次数是否超出配置次数
+    if (config.__retryCount >= config.retry) return Promise.reject(error);
+    // 次数增加
+    config.__retryCount += 1;
+    const backoff = new Promise(function(resolve) {
+      setTimeout(function() {
+        resolve();
+      }, config.retryDelay || 1);
+    });
+    // Return the promise in which recalls axios to retry the request
+    return backoff.then(function() {
+      return service(config);
+    });
   }
 );
 const transformRequest = function(data) {
+  // 不使用axios里面的transformRequest，是因为它只处理了data，没有处理params，这里统一处理
   // 格式化参数
   return data;
 };
@@ -81,13 +99,17 @@ export function ajaxMixin(
    * @param {number} ext._mockServerUrl 在线mock的网站地址
    * @param {boolean} ext._mock 是否使用mock功能，默认不使用
    * @param {string} ext._type 把post put patch请求的数据包装成什么格式，默认json
+   * @param {boolean} ext.retry 失败重试次数，默认0次
+   * @param {boolean} ext.retryDelay 重试间隔时间，默认1s
    */
   const request = function(type) {
-    return async function(url, data = {}, ext = { timeout: 20000 }) {
+    return async function(url, data = {}, ext = { timeout: 30000 }) {
       const {
         _ignoreMsg = false,
         _loading = "正在加载...",
         _type = "json",
+        _retry = 0,
+        _retryDelay = 1000,
         _mockServerId,
         _mockServerUrl,
         _mock,
@@ -99,7 +121,7 @@ export function ajaxMixin(
           type: "warning"
         });
       }
-      const config = Object.assign({}, baseSetting);
+      const config = {};
       Object.assign(config, options);
       // 当设置_mock时当条请求使用mock数据
       config.url = _mock
@@ -124,7 +146,9 @@ export function ajaxMixin(
       }
       try {
         loadingSwitch(this, _loading);
-        const { data } = await axios(config);
+        removePending(config); // 在请求开始前，对之前的请求做检查取消操作
+        addPending(config); // 将当前请求添加到 pending 中
+        const { data } = await service(config);
         return data;
       } catch (error) {
         if (error.code === "ECONNABORTED") error.msg = "请求超时";
@@ -133,6 +157,7 @@ export function ajaxMixin(
         }
         return Promise.reject(error);
       } finally {
+        removePending(config); // 在请求结束后，移除本次请求
         loadingSwitch(this, "");
       }
     };
@@ -162,8 +187,8 @@ export function ajaxMixin(
   prototype.$getCancelTokenSource = function() {
     return axios.CancelToken.source();
   };
-  prototype.$ajax = {};
+  prototype.$axios = {};
   ["get", "post", "put", "patch", "delete"].forEach(v => {
-    prototype.$ajax[v] = request(v).bind(prototype);
+    prototype.$axios[v] = request(v).bind(prototype);
   });
 }
