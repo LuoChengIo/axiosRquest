@@ -1,6 +1,6 @@
 <!--  -->
 <template>
-  <div @click="sdsd">hello</div>
+  <div>hello</div>
 </template>
 
 <script>
@@ -16,9 +16,6 @@ export default {
   },
   mounted() { },
   methods: {
-    sdsd() {
-      this._loadingHttp()
-    },
     cancelHttp() { // 取消请求
       const source = this.$getCancelTokenSource()
       this.$axios.post('/test/demo', { a: 1 }, { cancelToken: source.token })
