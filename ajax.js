@@ -34,11 +34,10 @@ const baseSetting = {
 // 请求拦截器
 axios.interceptors.request.use(
   config => {
-    console.log("config", config);
     return config;
   },
   error => {
-    console.log(error); // for debug
+    console.log("request:", error); // for debug
     return Promise.reject(error);
   }
 );
@@ -55,7 +54,7 @@ axios.interceptors.response.use(
     }
   },
   error => {
-    console.log("响应拦截器：" + error); // for debug
+    console.log("response:", error); // for debug
     return Promise.reject(error);
   }
 );
@@ -125,12 +124,11 @@ export function ajaxMixin(
       }
       try {
         loadingSwitch(this, _loading);
-        console.log("config.data", config.data);
         const { data } = await axios(config);
         return data;
       } catch (error) {
         if (error.code === "ECONNABORTED") error.msg = "请求超时";
-        if (!_ignoreMsg) {
+        if (!_ignoreMsg && !axios.isCancel(error)) {
           this.$message.error(error.msg || "系统错误");
         }
         return Promise.reject(error);
@@ -160,7 +158,7 @@ export function ajaxMixin(
   }
 
   const prototype = Vue.prototype;
-  // 返回可以取消ajax的source,
+  // 返回取消ajax的source,
   prototype.$getCancelTokenSource = function() {
     return axios.CancelToken.source();
   };
